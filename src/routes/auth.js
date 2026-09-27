@@ -34,7 +34,40 @@ router.post('/register', async (req, res) => {
 
     const existing = await prisma.user.findUnique({ where: { phone } });
     if (existing) return res.status(409).json({ error: 'An account with this phone number already exists.' });
+// 1. Phone check
+const existingPhone = await prisma.user.findUnique({ where: { phone } });
+if (existingPhone) {
+  return res.status(409).json({ error: 'An account with this phone number already exists.' });
+}
 
+// 2. Email check (Agar email provide kiya gaya hai)
+if (email) {
+  const existingEmail = await prisma.user.findUnique({ where: { email } });
+  if (existingEmail) {
+    return res.status(409).json({ error: 'An account with this email already exists.' });
+  }
+}
+
+// 3. User create ko try-catch me wrap karein
+try {
+  const user = await prisma.user.create({
+    data: {
+      name,
+      phone,
+      email: email ? email : null,
+      passwordHash,
+      role
+    }
+  });
+
+  // Aapka aage ka role-based code (STALL_OPERATOR, DISTRIBUTOR, etc.)...
+  
+} catch (error) {
+  if (error.code === 'P2002') {
+    return res.status(409).json({ error: 'Phone or Email already registered.' });
+  }
+  return res.status(500).json({ error: 'Internal server error during registration.' });
+}
     if (role === 'ADMIN') {
       const { adminInviteCode } = req.body;
       if (!process.env.ADMIN_INVITE_CODE || adminInviteCode !== process.env.ADMIN_INVITE_CODE) {
