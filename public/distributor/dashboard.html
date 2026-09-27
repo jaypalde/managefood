@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Distributor Dashboard — KumbhSetu</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <h1>🚚 KumbhSetu — Distributor</h1>
+  <button class="secondary" onclick="logout()">Logout</button>
+</div>
+
+<div class="container">
+  <div class="tabs">
+    <button data-tab="pickups" class="active">Available Pickups</button>
+    <button data-tab="requests">Delivery Requests</button>
+    <button data-tab="active">My Active Assignments</button>
+    <button data-tab="scanner">QR Scanner</button>
+    <button data-tab="history">History</button>
+  </div>
+
+  <!-- AVAILABLE PICKUPS -->
+  <div id="tab-pickups" class="card">
+    <h3>Available Pickups (soonest-expiring first)</h3>
+    <table>
+      <thead><tr><th>Batch</th><th>Food</th><th>Qty</th><th>Stall</th><th>Usable Until</th><th></th></tr></thead>
+      <tbody id="availableBody"></tbody>
+    </table>
+  </div>
+
+  <!-- OPEN DEMAND REQUESTS -->
+  <div id="tab-requests" class="card hidden">
+    <h3>Stalls Needing Food</h3>
+    <table>
+      <thead><tr><th>Stall</th><th>Food Wanted</th><th>Qty</th><th>Urgency</th><th>Status</th></tr></thead>
+      <tbody id="requestsBody"></tbody>
+    </table>
+  </div>
+
+  <!-- ACTIVE -->
+  <div id="tab-active" class="card hidden">
+    <h3>My Active Pickups</h3>
+    <table>
+      <thead><tr><th>Batch</th><th>Qty</th><th>Status</th><th></th></tr></thead>
+      <tbody id="activePickupsBody"></tbody>
+    </table>
+    <h3 style="margin-top:24px;">Assign Delivery (for picked-up batches)</h3>
+    <form id="assignForm">
+      <label>Food Batch (picked up)</label>
+      <select id="assign_batchId" required></select>
+      <label>Quantity</label>
+      <input type="number" id="assign_quantity" min="1" required />
+      <label>Destination</label>
+      <select id="assign_targetType">
+        <option value="STALL">Deliver to another stall</option>
+        <option value="PILGRIM_POINT">No stall needs it — Pilgrim distribution point</option>
+      </select>
+      <div id="assign_stallWrap">
+        <label>Target Stall ID (from Delivery Requests tab)</label>
+        <input type="text" id="assign_targetStallId" placeholder="Stall ID" />
+        <label>Related Request ID (optional)</label>
+        <input type="text" id="assign_requestId" placeholder="Request ID" />
+      </div>
+      <div id="assign_pilgrimWrap" class="hidden">
+        <label>Pilgrim Distribution Point</label>
+        <select id="assign_pilgrimPointId"></select>
+      </div>
+      <div class="error-msg" id="assignError"></div>
+      <button class="primary" type="submit">Assign for Delivery</button>
+    </form>
+    <h3 style="margin-top:24px;">My In-Transit Deliveries</h3>
+    <table>
+      <thead><tr><th>Batch</th><th>Qty</th><th>Target</th><th>Status</th><th></th></tr></thead>
+      <tbody id="activeDeliveriesBody"></tbody>
+    </table>
+  </div>
+
+  <!-- SCANNER -->
+  <div id="tab-scanner" class="card hidden">
+    <h3>QR Scanner</h3>
+    <p style="color:var(--muted); font-size:0.85rem;">Use this to confirm a pickup or delivery. Select the record first (from Active tab), then scan.</p>
+    <label>Confirm which record?</label>
+    <select id="scan_type">
+      <option value="pickup">Pickup confirmation</option>
+      <option value="delivery">Delivery confirmation</option>
+    </select>
+    <label>Record ID</label>
+    <input type="text" id="scan_recordId" placeholder="Pickup/Delivery ID" />
+    <div id="qr-reader" style="width:100%; max-width:360px; margin-top:12px;"></div>
+    <button class="secondary" style="margin-top:10px;" id="startScanBtn">Start Camera Scan</button>
+    <div style="margin-top:10px;">
+      <label>Or enter batch code manually</label>
+      <input type="text" id="manualBatchCode" placeholder="e.g. KS-2026-123456" />
+      <button class="primary" style="margin-top:8px;" id="manualConfirmBtn">Confirm</button>
+    </div>
+    <div class="error-msg" id="scanError"></div>
+    <div class="success-msg" id="scanSuccess"></div>
+  </div>
+
+  <!-- HISTORY -->
+  <div id="tab-history" class="card hidden">
+    <h3>Completed History</h3>
+    <table>
+      <thead><tr><th>Batch</th><th>Type</th><th>Qty</th><th>Status</th><th>When</th></tr></thead>
+      <tbody id="historyBody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+const user = requireLogin('DISTRIBUTOR');
+
+document.querySelectorAll('.tabs button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('[id^="tab-"]').forEach((el) => el.classList.add('hidden'));
+    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+    if (btn.dataset.tab === 'pickups') loadAvailable();
+    if (btn.dataset.tab === 'requests') loadRequests();
+    if (btn.dataset.tab === 'active') loadActive();
+    if (btn.dataset.tab === 'history') loadHistory();
+  });
+});
+
+async function loadAvailable() {
+  const { batches } = await api('/food-batches/available');
+  document.getElementById('availableBody').innerHTML = batches.map((b) => `
+    <tr>
+      <td>${b.batchCode}</td><td>${b.foodName}</td><td>${b.remainingServings} ${b.unit}</td>
+      <td>${b.stall.stallName}</td><td>${fmtDate(b.usableUntil)}</td>
+      <td><button class="secondary" onclick="acceptPickup('${b.id}', ${b.remainingServings})">Accept Pickup</button></td>
+    </tr>`).join('') || '<tr><td colspan="6">No available pickups right now.</td></tr>';
+}
+
+async function acceptPickup(foodBatchId, maxQty) {
+  const qty = prompt(`Quantity to pick up (max ${maxQty}):`, maxQty);
+  if (!qty) return;
+  try {
+    await api('/pickups/accept', { method: 'POST', body: { foodBatchId, quantity: Number(qty) } });
+    alert('Pickup accepted. Go to "My Active Assignments" to confirm via QR.');
+    loadAvailable();
+  } catch (e) { alert(e.message); }
+}
+
+async function loadRequests() {
+  const { requests } = await api('/requests?status=OPEN');
+  document.getElementById('requestsBody').innerHTML = requests.map((r) => `
+    <tr>
+      <td style="font-size:0.75rem;">${r.requestingStallId}<br/><b>${r.requestingStall.stallName}</b></td>
+      <td>${r.foodNameWanted || 'Any'}</td><td>${r.quantityNeeded - r.quantityFulfilled}</td>
+      <td>${['Normal','Normal','High','Critical'][r.urgency] || r.urgency}</td>
+      <td><span class="badge ${statusBadgeClass(r.status)}">${r.status}</span></td>
+    </tr>`).join('') || '<tr><td colspan="5">No open requests right now.</td></tr>';
+}
+
+async function loadActive() {
+  const { pickups } = await api('/pickups/mine');
+  const activePickups = pickups.filter((p) => p.status === 'ASSIGNED');
+  document.getElementById('activePickupsBody').innerHTML = activePickups.map((p) => `
+    <tr>
+      <td>${p.foodBatch.batchCode} — ${p.foodBatch.foodName}</td><td>${p.quantity}</td>
+      <td><span class="badge ${statusBadgeClass(p.status)}">${p.status}</span></td>
+      <td><button class="secondary" onclick="quickConfirmPickup('${p.id}', '${p.foodBatch.batchCode}')">Confirm via QR</button></td>
+    </tr>`).join('') || '<tr><td colspan="4">No active pickups.</td></tr>';
+
+  // batches ready to assign for delivery = picked up by me, not yet delivered
+  const pickedUp = pickups.filter((p) => p.status === 'CONFIRMED');
+  const sel = document.getElementById('assign_batchId');
+  sel.innerHTML = '';
+  pickedUp.forEach((p) => {
+    const opt = document.createElement('option');
+    opt.value = p.foodBatchId; opt.textContent = `${p.foodBatch.batchCode} — ${p.foodBatch.foodName} (${p.quantity})`;
+    sel.appendChild(opt);
+  });
+
+  const { points } = await api('/pilgrim-points');
+  const pSel = document.getElementById('assign_pilgrimPointId');
+  pSel.innerHTML = points.map((pt) => `<option value="${pt.id}">${pt.name}</option>`).join('');
+
+  const { deliveries } = await api('/deliveries/mine');
+  const activeDeliveries = deliveries.filter((d) => d.status === 'IN_TRANSIT');
+  document.getElementById('activeDeliveriesBody').innerHTML = activeDeliveries.map((d) => `
+    <tr>
+      <td>${d.foodBatch.batchCode}</td><td>${d.quantity}</td>
+      <td>${d.targetType === 'PILGRIM_POINT' ? (d.pilgrimPoint?.name || 'Pilgrim Point') : 'Stall'}</td>
+      <td><span class="badge ${statusBadgeClass(d.status)}">${d.status}</span></td>
+      <td><button class="secondary" onclick="quickConfirmDelivery('${d.id}', '${d.foodBatch.batchCode}')">Confirm via QR</button></td>
+    </tr>`).join('') || '<tr><td colspan="5">No in-transit deliveries.</td></tr>';
+}
+
+document.getElementById('assign_targetType').addEventListener('change', (e) => {
+  document.getElementById('assign_stallWrap').classList.toggle('hidden', e.target.value !== 'STALL');
+  document.getElementById('assign_pilgrimWrap').classList.toggle('hidden', e.target.value !== 'PILGRIM_POINT');
+});
+
+document.getElementById('assignForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('assignError'); err.textContent = '';
+  const targetType = document.getElementById('assign_targetType').value;
+  try {
+    await api('/deliveries/assign', {
+      method: 'POST',
+      body: {
+        foodBatchId: document.getElementById('assign_batchId').value,
+        quantity: document.getElementById('assign_quantity').value,
+        targetType,
+        targetStallId: targetType === 'STALL' ? document.getElementById('assign_targetStallId').value : undefined,
+        redistributionRequestId: targetType === 'STALL' ? (document.getElementById('assign_requestId').value || undefined) : undefined,
+        pilgrimPointId: targetType === 'PILGRIM_POINT' ? document.getElementById('assign_pilgrimPointId').value : undefined,
+      },
+    });
+    alert('Delivery assigned. Confirm via QR when you reach the destination.');
+    loadActive();
+  } catch (ex) { err.textContent = ex.message; }
+});
+
+let currentScanContext = null; // { type: 'pickup'|'delivery', id }
+
+function quickConfirmPickup(id, batchCode) {
+  currentScanContext = { type: 'pickup', id };
+  document.querySelector('[data-tab="scanner"]').click();
+  document.getElementById('scan_type').value = 'pickup';
+  document.getElementById('scan_recordId').value = id;
+}
+function quickConfirmDelivery(id, batchCode) {
+  currentScanContext = { type: 'delivery', id };
+  document.querySelector('[data-tab="scanner"]').click();
+  document.getElementById('scan_type').value = 'delivery';
+  document.getElementById('scan_recordId').value = id;
+}
+
+async function confirmScan(scannedBatchCode) {
+  const type = document.getElementById('scan_type').value;
+  const recordId = document.getElementById('scan_recordId').value.trim();
+  const errEl = document.getElementById('scanError');
+  const okEl = document.getElementById('scanSuccess');
+  errEl.textContent = ''; okEl.textContent = '';
+  if (!recordId) { errEl.textContent = 'Enter the Pickup/Delivery record ID first.'; return; }
+  try {
+    const endpoint = type === 'pickup' ? `/pickups/${recordId}/confirm-scan` : `/deliveries/${recordId}/confirm-scan`;
+    await api(endpoint, { method: 'POST', body: { scannedBatchCode } });
+    okEl.textContent = 'Confirmed successfully!';
+    loadActive();
+  } catch (e) { errEl.textContent = e.message; }
+}
+
+document.getElementById('manualConfirmBtn').addEventListener('click', () => {
+  const code = document.getElementById('manualBatchCode').value.trim();
+  if (!code) return;
+  confirmScan(code);
+});
+
+let html5QrCode;
+document.getElementById('startScanBtn').addEventListener('click', async () => {
+  if (typeof Html5Qrcode === 'undefined') { alert('Camera scanner library failed to load (offline?). Use manual entry instead.'); return; }
+  if (!html5QrCode) html5QrCode = new Html5Qrcode('qr-reader');
+  try {
+    await html5QrCode.start(
+      { facingMode: 'environment' },
+      { fps: 10, qrbox: 220 },
+      (decodedText) => {
+        try {
+          const parsed = JSON.parse(decodedText);
+          confirmScan(parsed.batchCode || decodedText);
+        } catch { confirmScan(decodedText); }
+        html5QrCode.stop();
+      },
+      () => {}
+    );
+  } catch (e) { document.getElementById('scanError').textContent = 'Camera access failed: ' + e; }
+});
+
+async function loadHistory() {
+  const [{ pickups }, { deliveries }] = await Promise.all([api('/pickups/mine'), api('/deliveries/mine')]);
+  const rows = [
+    ...pickups.filter((p) => p.status === 'CONFIRMED').map((p) => ({ batch: p.foodBatch.batchCode, type: 'Pickup', qty: p.quantity, status: p.status, when: p.confirmedAt })),
+    ...deliveries.filter((d) => d.status === 'DELIVERED').map((d) => ({ batch: d.foodBatch.batchCode, type: 'Delivery', qty: d.quantity, status: d.status, when: d.deliveredAt })),
+  ];
+  document.getElementById('historyBody').innerHTML = rows.map((r) => `
+    <tr><td>${r.batch}</td><td>${r.type}</td><td>${r.qty}</td>
+    <td><span class="badge ${statusBadgeClass(r.status)}">${r.status}</span></td><td>${fmtDate(r.when)}</td></tr>`).join('')
+    || '<tr><td colspan="5">No completed activity yet.</td></tr>';
+}
+
+loadAvailable();
+</script>
+</body>
+</html>

@@ -1,0 +1,9 @@
+{
+  "appId": "com.kumbhsetu.app",
+  "appName": "KumbhSetu",
+  "webDir": "public",
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}

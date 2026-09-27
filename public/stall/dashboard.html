@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Stall Dashboard — KumbhSetu</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="topbar">
+  <h1>🍲 KumbhSetu — Stall Operator</h1>
+  <div class="flex-between">
+    <span class="role-badge" id="stallStatusBadge">Loading…</span>
+    <button class="secondary" onclick="logout()">Logout</button>
+  </div>
+</div>
+
+<div class="container">
+  <div class="card" id="verificationNotice" style="display:none; background:#fff1e0; border-color:#ffcf94;">
+    ⚠️ Your stall is pending admin verification. You can browse this dashboard, but adding food batches is disabled until verified.
+  </div>
+
+  <div class="tabs">
+    <button data-tab="add" class="active">Add Food</button>
+    <button data-tab="inventory">My Inventory</button>
+    <button data-tab="request">Request Food</button>
+    <button data-tab="waste">Report Waste</button>
+    <button data-tab="notifications">Notifications</button>
+  </div>
+
+  <!-- ADD FOOD -->
+  <div id="tab-add" class="card">
+    <h3>Add New Food Batch</h3>
+    <form id="addFoodForm">
+      <label>Food Name</label>
+      <input type="text" id="foodName" required placeholder="e.g. Khichdi" />
+      <label>Total Servings Prepared</label>
+      <input type="number" id="totalServings" min="1" required />
+      <label>Preparation Time</label>
+      <input type="datetime-local" id="preparedAt" required />
+      <label>Usable Until (recommended consumption window)</label>
+      <input type="datetime-local" id="usableUntil" required />
+      <label><input type="checkbox" id="isTempSensitive" style="width:auto; display:inline-block; margin-right:6px;" />Temperature-sensitive item</label>
+      <label>Notes (optional)</label>
+      <textarea id="notes" rows="2"></textarea>
+      <div class="error-msg" id="addFoodError"></div>
+      <button class="primary" type="submit">Add Batch</button>
+    </form>
+  </div>
+
+  <!-- INVENTORY -->
+  <div id="tab-inventory" class="card hidden">
+    <h3>My Food Batches</h3>
+    <table>
+      <thead><tr><th>Batch</th><th>Food</th><th>Remaining</th><th>Usable Until</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="inventoryBody"></tbody>
+    </table>
+  </div>
+
+  <!-- REQUEST FOOD -->
+  <div id="tab-request" class="card hidden">
+    <h3>Request Food (Shortage)</h3>
+    <form id="requestForm">
+      <label>Food Type Needed (optional)</label>
+      <input type="text" id="req_foodName" placeholder="e.g. Any cooked meal" />
+      <label>Quantity Needed</label>
+      <input type="number" id="req_quantity" min="1" required />
+      <label>Urgency</label>
+      <select id="req_urgency">
+        <option value="1">Normal</option>
+        <option value="2">High</option>
+        <option value="3">Critical</option>
+      </select>
+      <div class="error-msg" id="reqError"></div>
+      <button class="primary" type="submit">Submit Request</button>
+    </form>
+    <h4 style="margin-top:20px;">My Requests</h4>
+    <table>
+      <thead><tr><th>Food</th><th>Needed</th><th>Fulfilled</th><th>Status</th><th>Raised</th></tr></thead>
+      <tbody id="myRequestsBody"></tbody>
+    </table>
+  </div>
+
+  <!-- WASTE -->
+  <div id="tab-waste" class="card hidden">
+    <h3>Report Unsuitable / Expired Food</h3>
+    <p style="color:var(--muted); font-size:0.85rem;">Select an existing batch and mark the unusable quantity as NOT FIT FOR DISTRIBUTION. It will be routed to the waste workflow, separate from redistribution.</p>
+    <form id="wasteForm">
+      <label>Food Batch</label>
+      <select id="waste_batchId" required></select>
+      <label>Quantity</label>
+      <input type="number" id="waste_quantity" min="1" required />
+      <label>Category</label>
+      <select id="waste_category">
+        <option value="EXPIRED">Expired</option>
+        <option value="SPOILED">Spoiled</option>
+        <option value="CONTAMINATED">Contaminated</option>
+        <option value="UNSAFE">Unsafe</option>
+        <option value="OTHER">Other</option>
+      </select>
+      <label>Reason</label>
+      <textarea id="waste_reason" rows="2" required placeholder="Describe why this food is unfit"></textarea>
+      <div class="error-msg" id="wasteError"></div>
+      <button class="primary" type="submit">Mark as Not Fit for Distribution</button>
+    </form>
+    <h4 style="margin-top:20px;">My Waste Reports</h4>
+    <table>
+      <thead><tr><th>Food</th><th>Qty</th><th>Category</th><th>Status</th><th>Reported</th></tr></thead>
+      <tbody id="wasteHistoryBody"></tbody>
+    </table>
+  </div>
+
+  <!-- NOTIFICATIONS -->
+  <div id="tab-notifications" class="card hidden">
+    <h3>Notifications</h3>
+    <div id="notifList"></div>
+  </div>
+
+  <!-- QR MODAL -->
+  <div class="card hidden" id="qrModal" style="position:fixed; top:10%; left:50%; transform:translateX(-50%); max-width:320px; z-index:50;">
+    <div class="qr-box">
+      <h4>Batch QR Code</h4>
+      <img id="qrImage" src="" />
+      <p id="qrBatchCode" style="font-weight:700;"></p>
+      <button class="secondary" onclick="document.getElementById('qrModal').classList.add('hidden')">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+const user = requireLogin('STALL_OPERATOR');
+let myStall = null;
+
+// tabs
+document.querySelectorAll('.tabs button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('[id^="tab-"]').forEach((el) => el.classList.add('hidden'));
+    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+    if (btn.dataset.tab === 'inventory') loadInventory();
+    if (btn.dataset.tab === 'request') loadMyRequests();
+    if (btn.dataset.tab === 'waste') { loadInventory(true); loadWasteHistory(); }
+    if (btn.dataset.tab === 'notifications') loadNotifications();
+  });
+});
+
+async function loadStall() {
+  try {
+    const { stall } = await api('/stalls/me');
+    myStall = stall;
+    const badge = document.getElementById('stallStatusBadge');
+    badge.textContent = `${stall.stallName} — ${stall.status.replace('_', ' ')}`;
+    document.getElementById('verificationNotice').style.display = stall.status !== 'VERIFIED' ? 'block' : 'none';
+  } catch (e) { console.error(e); }
+}
+loadStall();
+
+document.getElementById('addFoodForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('addFoodError');
+  err.textContent = '';
+  try {
+    await api('/food-batches', {
+      method: 'POST',
+      body: {
+        foodName: document.getElementById('foodName').value,
+        totalServings: document.getElementById('totalServings').value,
+        preparedAt: document.getElementById('preparedAt').value,
+        usableUntil: document.getElementById('usableUntil').value,
+        isTemperatureSensitive: document.getElementById('isTempSensitive').checked,
+        notes: document.getElementById('notes').value,
+      },
+    });
+    e.target.reset();
+    alert('Food batch added successfully.');
+  } catch (ex) { err.textContent = ex.message; }
+});
+
+async function loadInventory(forWasteSelect = false) {
+  const { batches } = await api('/food-batches/mine');
+  if (forWasteSelect) {
+    const sel = document.getElementById('waste_batchId');
+    sel.innerHTML = '';
+    batches.filter((b) => b.remainingServings > 0).forEach((b) => {
+      const opt = document.createElement('option');
+      opt.value = b.id; opt.textContent = `${b.batchCode} — ${b.foodName} (${b.remainingServings} left)`;
+      sel.appendChild(opt);
+    });
+    return;
+  }
+  const body = document.getElementById('inventoryBody');
+  body.innerHTML = batches.map((b) => `
+    <tr>
+      <td>${b.batchCode}</td>
+      <td>${b.foodName}</td>
+      <td>${b.remainingServings} / ${b.totalServings} ${b.unit}</td>
+      <td>${fmtDate(b.usableUntil)}</td>
+      <td><span class="badge ${statusBadgeClass(b.status)}">${b.status}</span></td>
+      <td>
+        ${b.status === 'CREATED' && b.remainingServings > 0 ? `<button class="secondary" onclick="markAvailable('${b.id}')">Mark Available</button>` : ''}
+        <button class="secondary" onclick="viewQr('${b.id}')">QR</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="6">No food batches yet.</td></tr>';
+}
+
+async function markAvailable(id) {
+  try { await api(`/food-batches/${id}/mark-available`, { method: 'PATCH' }); loadInventory(); }
+  catch (e) { alert(e.message); }
+}
+
+async function viewQr(id) {
+  try {
+    const { qr, batchCode } = await api(`/food-batches/${id}/qr`);
+    document.getElementById('qrImage').src = qr;
+    document.getElementById('qrBatchCode').textContent = batchCode;
+    document.getElementById('qrModal').classList.remove('hidden');
+  } catch (e) { alert(e.message); }
+}
+
+document.getElementById('requestForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('reqError'); err.textContent = '';
+  try {
+    await api('/requests', {
+      method: 'POST',
+      body: {
+        foodNameWanted: document.getElementById('req_foodName').value,
+        quantityNeeded: document.getElementById('req_quantity').value,
+        urgency: document.getElementById('req_urgency').value,
+      },
+    });
+    e.target.reset();
+    loadMyRequests();
+  } catch (ex) { err.textContent = ex.message; }
+});
+
+async function loadMyRequests() {
+  const { requests } = await api('/requests/mine');
+  document.getElementById('myRequestsBody').innerHTML = requests.map((r) => `
+    <tr>
+      <td>${r.foodNameWanted || 'Any'}</td>
+      <td>${r.quantityNeeded}</td>
+      <td>${r.quantityFulfilled}</td>
+      <td><span class="badge ${statusBadgeClass(r.status)}">${r.status}</span></td>
+      <td>${fmtDate(r.createdAt)}</td>
+    </tr>`).join('') || '<tr><td colspan="5">No requests yet.</td></tr>';
+}
+
+document.getElementById('wasteForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const err = document.getElementById('wasteError'); err.textContent = '';
+  try {
+    const batchId = document.getElementById('waste_batchId').value;
+    await api(`/food-batches/${batchId}/mark-unfit`, {
+      method: 'PATCH',
+      body: {
+        quantity: document.getElementById('waste_quantity').value,
+        category: document.getElementById('waste_category').value,
+        reason: document.getElementById('waste_reason').value,
+      },
+    });
+    e.target.reset();
+    loadInventory(true);
+    loadWasteHistory();
+    alert('Reported. Routed to waste management workflow.');
+  } catch (ex) { err.textContent = ex.message; }
+});
+
+async function loadWasteHistory() {
+  const { records } = await api('/waste/mine');
+  document.getElementById('wasteHistoryBody').innerHTML = records.map((r) => `
+    <tr>
+      <td>${r.foodName}</td><td>${r.quantity}</td><td>${r.category}</td>
+      <td><span class="badge ${statusBadgeClass(r.status)}">${r.status}</span></td>
+      <td>${fmtDate(r.reportedAt)}</td>
+    </tr>`).join('') || '<tr><td colspan="5">No waste reports yet.</td></tr>';
+}
+
+async function loadNotifications() {
+  const { notifications } = await api('/notifications');
+  document.getElementById('notifList').innerHTML = notifications.map((n) => `
+    <div class="card" style="padding:10px 14px; ${n.isRead ? 'opacity:0.6;' : ''}">
+      <b>${n.title}</b><br/><span style="font-size:0.88rem;">${n.message}</span>
+      <div style="font-size:0.75rem; color:var(--muted); margin-top:4px;">${fmtDate(n.createdAt)}</div>
+    </div>`).join('') || '<p>No notifications.</p>';
+}
+
+loadInventory();
+</script>
+</body>
+</html>

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KumbhSetu — Smart Food Redistribution</title>
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+<div class="center-page">
+  <div class="card auth-card">
+    <div style="text-align:center; margin-bottom: 6px;">
+      <div style="font-size:2rem;">🥣</div>
+      <h2 style="margin:4px 0 0;">KumbhSetu</h2>
+      <div style="color:var(--muted); font-size:0.85rem;">Smart Food Redistribution &amp; Waste Management</div>
+    </div>
+
+    <!-- Single role selector — used for BOTH login and registration -->
+    <div class="role-tabs" id="roleTabs">
+      <button type="button" data-role="STALL_OPERATOR" class="active">🍲 Stall Operator</button>
+      <button type="button" data-role="DISTRIBUTOR">🚚 Distributor</button>
+      <button type="button" data-role="ADMIN">🛡️ Admin</button>
+    </div>
+
+    <div class="tabs" id="modeTabs">
+      <button type="button" data-mode="login" class="active">Login</button>
+      <button type="button" data-mode="register">Register</button>
+    </div>
+
+    <form id="authForm">
+      <div id="loginFields">
+        <label>Phone Number</label>
+        <input type="tel" id="phone" placeholder="10-digit mobile number" required />
+        <label>Password</label>
+        <input type="password" id="password" placeholder="Password" required minlength="6" />
+      </div>
+
+      <div id="registerFields" class="hidden">
+        <label>Full Name</label>
+        <input type="text" id="reg_name" placeholder="Your full name" />
+        <label>Email (optional)</label>
+        <input type="email" id="reg_email" placeholder="you@example.com" />
+
+        <!-- Role-specific blocks -->
+        <div id="stallFields">
+          <label>Stall Name</label>
+          <input type="text" id="reg_stallName" placeholder="e.g. Anna Kshetra Bhandara" />
+          <label>Zone</label>
+          <select id="reg_zoneId"><option value="">Select zone (optional)</option></select>
+        </div>
+
+        <div id="distributorFields" class="hidden">
+          <label>Vehicle Info (optional)</label>
+          <input type="text" id="reg_vehicleInfo" placeholder="e.g. Tempo - UP70 AB1234" />
+        </div>
+
+        <div id="adminFields" class="hidden">
+          <label>Designation (optional)</label>
+          <input type="text" id="reg_designation" placeholder="e.g. Zone Coordinator" />
+          <label>Admin Invite Code</label>
+          <input type="text" id="reg_adminInviteCode" placeholder="Provided by event organizers" />
+        </div>
+      </div>
+
+      <div class="error-msg" id="errorMsg"></div>
+      <div class="success-msg" id="successMsg"></div>
+      <button type="submit" class="primary" id="submitBtn">Login</button>
+    </form>
+
+    <div class="mode-toggle" id="modeHint">New here? Click <b>Register</b> above.</div>
+    <div class="mode-toggle"><a href="/pilgrim/map.html">🙏 Looking for free food as a pilgrim? Click here (no login needed)</a></div>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+let selectedRole = 'STALL_OPERATOR';
+let mode = 'login';
+
+const roleTabs = document.getElementById('roleTabs');
+const modeTabs = document.getElementById('modeTabs');
+const submitBtn = document.getElementById('submitBtn');
+const registerFields = document.getElementById('registerFields');
+const loginFields = document.getElementById('loginFields');
+const errorMsg = document.getElementById('errorMsg');
+const successMsg = document.getElementById('successMsg');
+
+roleTabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-role]');
+  if (!btn) return;
+  [...roleTabs.children].forEach((b) => b.classList.remove('active'));
+  btn.classList.add('active');
+  selectedRole = btn.dataset.role;
+  toggleRoleFields();
+});
+
+modeTabs.addEventListener('click', (e) => {
+  const btn = e.target.closest('button[data-mode]');
+  if (!btn) return;
+  [...modeTabs.children].forEach((b) => b.classList.remove('active'));
+  btn.classList.add('active');
+  mode = btn.dataset.mode;
+  registerFields.classList.toggle('hidden', mode !== 'register');
+  submitBtn.textContent = mode === 'register' ? 'Create Account' : 'Login';
+  document.getElementById('modeHint').textContent =
+    mode === 'register' ? 'Already registered? Click Login above.' : 'New here? Click Register above.';
+  errorMsg.textContent = ''; successMsg.textContent = '';
+});
+
+function toggleRoleFields() {
+  document.getElementById('stallFields').classList.toggle('hidden', selectedRole !== 'STALL_OPERATOR');
+  document.getElementById('distributorFields').classList.toggle('hidden', selectedRole !== 'DISTRIBUTOR');
+  document.getElementById('adminFields').classList.toggle('hidden', selectedRole !== 'ADMIN');
+}
+toggleRoleFields();
+
+async function loadZones() {
+  try {
+    const { zones } = await api('/zones');
+    const sel = document.getElementById('reg_zoneId');
+    zones.forEach((z) => {
+      const opt = document.createElement('option');
+      opt.value = z.id; opt.textContent = z.name;
+      sel.appendChild(opt);
+    });
+  } catch (e) { /* non-fatal */ }
+}
+loadZones();
+
+function dashboardUrlFor(role) {
+  if (role === 'STALL_OPERATOR') return '/stall/dashboard.html';
+  if (role === 'DISTRIBUTOR') return '/distributor/dashboard.html';
+  if (role === 'ADMIN') return '/admin/dashboard.html';
+  return '/';
+}
+
+document.getElementById('authForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  errorMsg.textContent = ''; successMsg.textContent = '';
+  submitBtn.disabled = true;
+  try {
+    if (mode === 'login') {
+      const phone = document.getElementById('phone').value.trim();
+      const password = document.getElementById('password').value;
+      const { token, user } = await api('/auth/login', { method: 'POST', body: { phone, password, role: selectedRole } });
+      setSession(token, user);
+      window.location.href = dashboardUrlFor(user.role);
+    } else {
+      const phone = document.getElementById('phone').value.trim();
+      const password = document.getElementById('password').value;
+      const name = document.getElementById('reg_name').value.trim();
+      const email = document.getElementById('reg_email').value.trim();
+      const body = { name, phone, email, password, role: selectedRole };
+
+      if (selectedRole === 'STALL_OPERATOR') {
+        body.stallName = document.getElementById('reg_stallName').value.trim();
+        body.zoneId = document.getElementById('reg_zoneId').value || undefined;
+      } else if (selectedRole === 'DISTRIBUTOR') {
+        body.vehicleInfo = document.getElementById('reg_vehicleInfo').value.trim();
+      } else if (selectedRole === 'ADMIN') {
+        body.designation = document.getElementById('reg_designation').value.trim();
+        body.adminInviteCode = document.getElementById('reg_adminInviteCode').value.trim();
+      }
+
+      const { token, user, message } = await api('/auth/register', { method: 'POST', body });
+      setSession(token, user);
+      successMsg.textContent = message || 'Account created.';
+      setTimeout(() => { window.location.href = dashboardUrlFor(user.role); }, 800);
+    }
+  } catch (err) {
+    errorMsg.textContent = err.message;
+  } finally {
+    submitBtn.disabled = false;
+  }
+});
+
+// If already logged in, skip straight to dashboard
+(function autoRedirect() {
+  const user = getUser();
+  if (getToken() && user) window.location.href = dashboardUrlFor(user.role);
+})();
+</script>
+</body>
+</html>

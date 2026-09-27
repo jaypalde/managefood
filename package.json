@@ -1,0 +1,42 @@
+{
+  "name": "kumbhsetu",
+  "version": "1.0.0",
+  "description": "KumbhSetu - Smart Food Redistribution & Waste Management System for Kumbh Mela",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "nodemon src/server.js",
+    "start": "node src/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate deploy",
+    "prisma:migrate:dev": "prisma migrate dev",
+    "seed": "node prisma/seed.js",
+    "android:sync": "npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:build": "npx cap build android",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@capacitor/android": "^7.0.0",
+    "@capacitor/core": "^7.0.0",
+    "@prisma/client": "^5.20.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "morgan": "^1.10.0",
+    "qrcode": "^1.5.4",
+    "serverless-http": "^3.1.1",
+    "uuid": "^9.0.1"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^7.0.0",
+    "nodemon": "^3.1.4",
+    "prisma": "^5.20.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

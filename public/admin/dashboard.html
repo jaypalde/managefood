@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin Dashboard — KumbhSetu</title>
+<link rel="stylesheet" href="/css/style.css" />
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+</head>
+<body>
+<div class="topbar">
+  <h1>🛡️ KumbhSetu — Admin Control Center</h1>
+  <button class="secondary" onclick="logout()">Logout</button>
+</div>
+
+<div class="container">
+  <div class="tabs">
+    <button data-tab="overview" class="active">Overview</button>
+    <button data-tab="stalls">Stalls</button>
+    <button data-tab="distributors">Distributors</button>
+    <button data-tab="requests">Requests / Matching</button>
+    <button data-tab="waste">Waste</button>
+    <button data-tab="zones">Zones &amp; Pilgrim Points</button>
+  </div>
+
+  <!-- OVERVIEW -->
+  <div id="tab-overview" class="card">
+    <div class="grid" id="statsGrid"></div>
+    <div class="grid" style="margin-top:20px;">
+      <div class="stat-box" style="text-align:left;">
+        <h4>Daily Trend (last 14 days)</h4>
+        <canvas id="trendChart" height="160"></canvas>
+      </div>
+      <div class="stat-box" style="text-align:left;">
+        <h4>Most Active Stalls</h4>
+        <table><thead><tr><th>Stall</th><th>Batches</th></tr></thead><tbody id="activeStallsBody"></tbody></table>
+      </div>
+    </div>
+  </div>
+
+  <!-- STALLS -->
+  <div id="tab-stalls" class="card hidden">
+    <h3>Manage Stalls</h3>
+    <table>
+      <thead><tr><th>Stall</th><th>Owner</th><th>Phone</th><th>Zone</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="stallsBody"></tbody>
+    </table>
+  </div>
+
+  <!-- DISTRIBUTORS -->
+  <div id="tab-distributors" class="card hidden">
+    <h3>Manage Distributors</h3>
+    <table>
+      <thead><tr><th>Name</th><th>Phone</th><th>Vehicle</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="distributorsBody"></tbody>
+    </table>
+  </div>
+
+  <!-- REQUESTS -->
+  <div id="tab-requests" class="card hidden">
+    <div class="flex-between">
+      <h3>Redistribution Requests</h3>
+      <button class="primary" style="width:auto;" onclick="runMatchSweep()">Run Matching Sweep</button>
+    </div>
+    <table>
+      <thead><tr><th>Stall</th><th>Food</th><th>Needed</th><th>Fulfilled</th><th>Urgency</th><th>Status</th></tr></thead>
+      <tbody id="requestsBody"></tbody>
+    </table>
+  </div>
+
+  <!-- WASTE -->
+  <div id="tab-waste" class="card hidden">
+    <h3>Waste Management</h3>
+    <table>
+      <thead><tr><th>Stall</th><th>Food</th><th>Qty</th><th>Category</th><th>Status</th><th>Actions</th></tr></thead>
+      <tbody id="wasteBody"></tbody>
+    </table>
+  </div>
+
+  <!-- ZONES -->
+  <div id="tab-zones" class="card hidden">
+    <h3>Zones</h3>
+    <form id="zoneForm" class="flex-between" style="gap:8px; align-items:flex-end;">
+      <div style="flex:1;"><label>New Zone Name</label><input type="text" id="zoneName" required /></div>
+      <button class="secondary" type="submit">Add Zone</button>
+    </form>
+    <table style="margin-top:12px;"><thead><tr><th>Zone</th><th>Stalls</th><th>Batches</th><th>Waste (servings)</th></tr></thead><tbody id="zonesBody"></tbody></table>
+
+    <h3 style="margin-top:28px;">Pilgrim Distribution Points</h3>
+    <form id="pointForm">
+      <label>Point Name</label>
+      <input type="text" id="pointName" required />
+      <label>Latitude</label>
+      <input type="number" step="any" id="pointLat" required />
+      <label>Longitude</label>
+      <input type="number" step="any" id="pointLng" required />
+      <button class="primary" type="submit">Add Distribution Point</button>
+    </form>
+  </div>
+</div>
+
+<script src="/js/api.js"></script>
+<script>
+const user = requireLogin('ADMIN');
+
+document.querySelectorAll('.tabs button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('[id^="tab-"]').forEach((el) => el.classList.add('hidden'));
+    document.getElementById('tab-' + btn.dataset.tab).classList.remove('hidden');
+    if (btn.dataset.tab === 'stalls') loadStalls();
+    if (btn.dataset.tab === 'distributors') loadDistributors();
+    if (btn.dataset.tab === 'requests') loadRequests();
+    if (btn.dataset.tab === 'waste') loadWaste();
+    if (btn.dataset.tab === 'zones') loadZones();
+  });
+});
+
+async function loadOverview() {
+  const stats = await api('/admin/stats');
+  const cards = [
+    ['Total Stalls', stats.totalStalls], ['Active/Verified Stalls', stats.activeStalls],
+    ['Total Distributors', stats.totalDistributors], ['Active Distributors', stats.activeDistributors],
+    ['Available Food Batches', stats.foodAvailableBatches], ['Pending Pickups', stats.pendingPickupRequests],
+    ['Pending Deliveries', stats.pendingDeliveryRequests], ['Servings Redistributed', stats.totalServingsRedistributedToStalls],
+    ['Servings to Pilgrims', stats.totalServingsGivenToPilgrims], ['Servings Wasted', stats.totalServingsWasted],
+  ];
+  document.getElementById('statsGrid').innerHTML = cards.map(([label, num]) => `
+    <div class="stat-box"><div class="num">${num}</div><div class="label">${label}</div></div>`).join('');
+
+  const { stalls } = await api('/admin/most-active-stalls');
+  document.getElementById('activeStallsBody').innerHTML = stalls.map((s) => `<tr><td>${s.name}</td><td>${s.batchCount}</td></tr>`).join('') || '<tr><td colspan="2">No data yet.</td></tr>';
+
+  const trends = await api('/admin/trends?range=daily');
+  const days = [...new Set([...Object.keys(trends.redistributed), ...Object.keys(trends.wasted), ...Object.keys(trends.pilgrimDistributed)])].sort();
+  new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: days,
+      datasets: [
+        { label: 'Redistributed', data: days.map((d) => trends.redistributed[d] || 0), borderColor: '#1e8e3e' },
+        { label: 'Pilgrim Distributed', data: days.map((d) => trends.pilgrimDistributed[d] || 0), borderColor: '#ff7b00' },
+        { label: 'Wasted', data: days.map((d) => trends.wasted[d] || 0), borderColor: '#d93025' },
+      ],
+    },
+    options: { responsive: true, plugins: { legend: { position: 'bottom' } } },
+  });
+}
+loadOverview();
+
+async function loadStalls() {
+  const { stalls } = await api('/stalls');
+  document.getElementById('stallsBody').innerHTML = stalls.map((s) => `
+    <tr>
+      <td>${s.stallName}</td><td>${s.user.name}</td><td>${s.user.phone}</td><td>${s.zone?.name || '-'}</td>
+      <td><span class="badge ${statusBadgeClass(s.status)}">${s.status}</span></td>
+      <td>
+        ${s.status !== 'VERIFIED' ? `<button class="secondary" onclick="setStallStatus('${s.id}','VERIFIED')">Verify</button>` : ''}
+        ${s.status !== 'SUSPENDED' ? `<button class="secondary" onclick="setStallStatus('${s.id}','SUSPENDED')">Suspend</button>` : ''}
+      </td>
+    </tr>`).join('') || '<tr><td colspan="6">No stalls yet.</td></tr>';
+}
+async function setStallStatus(id, status) {
+  await api(`/stalls/${id}/verify`, { method: 'PATCH', body: { status } });
+  loadStalls();
+}
+
+async function loadDistributors() {
+  const { distributors } = await api('/admin/distributors');
+  document.getElementById('distributorsBody').innerHTML = distributors.map((d) => `
+    <tr>
+      <td>${d.user.name}</td><td>${d.user.phone}</td><td>${d.vehicleInfo || '-'}</td>
+      <td><span class="badge ${statusBadgeClass(d.status)}">${d.status}</span></td>
+      <td>
+        ${d.status !== 'VERIFIED' ? `<button class="secondary" onclick="setDistStatus('${d.id}','VERIFIED')">Verify</button>` : ''}
+        ${d.status !== 'SUSPENDED' ? `<button class="secondary" onclick="setDistStatus('${d.id}','SUSPENDED')">Suspend</button>` : ''}
+      </td>
+    </tr>`).join('') || '<tr><td colspan="5">No distributors yet.</td></tr>';
+}
+async function setDistStatus(id, status) {
+  await api(`/admin/distributors/${id}/verify`, { method: 'PATCH', body: { status } });
+  loadDistributors();
+}
+
+async function loadRequests() {
+  const { requests } = await api('/requests');
+  document.getElementById('requestsBody').innerHTML = requests.map((r) => `
+    <tr>
+      <td>${r.requestingStall.stallName}</td><td>${r.foodNameWanted || 'Any'}</td>
+      <td>${r.quantityNeeded}</td><td>${r.quantityFulfilled}</td>
+      <td>${['','Normal','High','Critical'][r.urgency] || r.urgency}</td>
+      <td><span class="badge ${statusBadgeClass(r.status)}">${r.status}</span></td>
+    </tr>`).join('') || '<tr><td colspan="6">No requests yet.</td></tr>';
+}
+async function runMatchSweep() {
+  const { matched } = await api('/requests/match-sweep', { method: 'POST' });
+  alert(`Matching sweep complete: ${matched} request(s) matched to available batches.`);
+  loadRequests();
+}
+
+async function loadWaste() {
+  const { records } = await api('/waste');
+  document.getElementById('wasteBody').innerHTML = records.map((r) => `
+    <tr>
+      <td>${r.stall.stallName}</td><td>${r.foodName}</td><td>${r.quantity}</td><td>${r.category}</td>
+      <td><span class="badge ${statusBadgeClass(r.status)}">${r.status}</span></td>
+      <td>
+        ${r.status === 'REPORTED' ? `<button class="secondary" onclick="setWasteStatus('${r.id}','COLLECTED')">Mark Collected</button>` : ''}
+        ${r.status === 'COLLECTED' ? `<button class="secondary" onclick="setWasteStatus('${r.id}','PROCESSED')">Mark Processed</button>` : ''}
+      </td>
+    </tr>`).join('') || '<tr><td colspan="6">No waste records yet.</td></tr>';
+}
+async function setWasteStatus(id, status) {
+  await api(`/waste/${id}/collect`, { method: 'PATCH', body: { status } });
+  loadWaste();
+}
+
+document.getElementById('zoneForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  await api('/zones', { method: 'POST', body: { name: document.getElementById('zoneName').value } });
+  e.target.reset();
+  loadZones();
+});
+document.getElementById('pointForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  await api('/pilgrim-points', {
+    method: 'POST',
+    body: {
+      name: document.getElementById('pointName').value,
+      latitude: Number(document.getElementById('pointLat').value),
+      longitude: Number(document.getElementById('pointLng').value),
+    },
+  });
+  e.target.reset();
+  alert('Distribution point added.');
+});
+async function loadZones() {
+  const { zones } = await api('/admin/zone-stats');
+  document.getElementById('zonesBody').innerHTML = zones.map((z) => `
+    <tr><td>${z.zone}</td><td>${z.stallCount}</td><td>${z.totalBatches}</td><td>${z.totalWasteServings}</td></tr>`).join('') || '<tr><td colspan="4">No zones yet.</td></tr>';
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,341 @@
+// KumbhSetu Database Schema
+// Production database: PostgreSQL
+// Local development can still use SQLite, but this repo is configured for Neon/Postgres deployment.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ------------------------------------------------------------------
+// ENUMS
+// ------------------------------------------------------------------
+
+// ------------------------------------------------------------------
+// CORE / AUTH
+// ------------------------------------------------------------------
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  phone        String   @unique
+  email        String?  @unique
+  passwordHash String
+  role         String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  stall        Stall?
+  distributor  Distributor?
+  adminProfile Admin?
+
+  notifications      Notification[]
+  auditLogs          AuditLog[]
+  wasteRecordsLogged WasteRecord[]     @relation("WasteReportedBy")
+
+  @@index([role])
+}
+
+model Admin {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id])
+  designation String?
+}
+
+// ------------------------------------------------------------------
+// ZONES / LOCATIONS
+// ------------------------------------------------------------------
+
+model Zone {
+  id          String   @id @default(uuid())
+  name        String   @unique   // e.g. "Sector 4 - Ganga Ghat"
+  description String?
+  createdAt   DateTime @default(now())
+
+  stalls               Stall[]
+  pilgrimPoints         PilgrimDistributionPoint[]
+}
+
+// ------------------------------------------------------------------
+// STALLS
+// ------------------------------------------------------------------
+
+model Stall {
+  id            String      @id @default(uuid())
+  userId        String      @unique
+  user          User        @relation(fields: [userId], references: [id])
+  stallName     String
+  zoneId        String?
+  zone          Zone?       @relation(fields: [zoneId], references: [id])
+  latitude      Float?
+  longitude     Float?
+  status        String      @default("PENDING_VERIFICATION")
+  contactPhone  String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  foodBatches          FoodBatch[]
+  redistributionRequests RedistributionRequest[]
+  wasteRecords         WasteRecord[]
+
+  @@index([status])
+  @@index([zoneId])
+}
+
+// ------------------------------------------------------------------
+// DISTRIBUTORS
+// ------------------------------------------------------------------
+
+model Distributor {
+  id           String            @id @default(uuid())
+  userId       String            @unique
+  user         User              @relation(fields: [userId], references: [id])
+  vehicleInfo  String?
+  status       String            @default("PENDING_VERIFICATION")
+  isAvailable  Boolean           @default(true)
+  currentLat   Float?
+  currentLng   Float?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  pickupRecords   PickupRecord[]
+  deliveryRecords DeliveryRecord[]
+
+  @@index([status, isAvailable])
+}
+
+// ------------------------------------------------------------------
+// FOOD ITEMS / BATCHES / INVENTORY
+// ------------------------------------------------------------------
+
+// Master catalog of food item types (optional normalization layer)
+model FoodItem {
+  id       String @id @default(uuid())
+  name     String @unique
+  category String? // e.g. "Cooked", "Packaged", "Fruits", "Dairy"
+  isTemperatureSensitive Boolean @default(false)
+
+  batches FoodBatch[]
+}
+
+model FoodBatch {
+  id                 String      @id @default(uuid())
+  batchCode          String      @unique // human readable e.g. KS-2027-000123, encoded in QR
+  stallId            String
+  stall              Stall       @relation(fields: [stallId], references: [id])
+  foodItemId         String?
+  foodItem           FoodItem?   @relation(fields: [foodItemId], references: [id])
+  foodName           String      // free text, in case not in catalog
+  totalServings      Int
+  remainingServings  Int
+  unit               String      @default("servings")
+  preparedAt         DateTime
+  usableUntil        DateTime    // recommended consumption window / expiry
+  isTemperatureSensitive Boolean @default(false)
+  status             String     @default("CREATED")
+  notes              String?
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+
+  qrTransactions        QRTransaction[]
+  redistributionRequests RedistributionRequest[] @relation("MatchedBatch")
+  pickupRecords          PickupRecord[]
+  deliveryRecords        DeliveryRecord[]
+  wasteRecords           WasteRecord[]
+  pilgrimDistributions   PilgrimDistributionRecord[]
+
+  @@index([status])
+  @@index([usableUntil])
+  @@index([stallId])
+}
+
+// ------------------------------------------------------------------
+// REDISTRIBUTION REQUESTS (demand side, raised by stalls)
+// ------------------------------------------------------------------
+
+model RedistributionRequest {
+  id               String         @id @default(uuid())
+  requestingStallId String
+  requestingStall   Stall         @relation(fields: [requestingStallId], references: [id])
+  foodNameWanted    String?
+  quantityNeeded    Int
+  quantityFulfilled Int           @default(0)
+  urgency           Int           @default(1) // 1=normal 2=high 3=critical
+  status            String        @default("OPEN")
+  matchedBatchId    String?
+  matchedBatch      FoodBatch?    @relation("MatchedBatch", fields: [matchedBatchId], references: [id])
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  deliveryRecords DeliveryRecord[]
+
+  @@index([status])
+}
+
+// ------------------------------------------------------------------
+// PICKUP (distributor collects from source stall)
+// ------------------------------------------------------------------
+
+model PickupRecord {
+  id             String       @id @default(uuid())
+  foodBatchId    String
+  foodBatch      FoodBatch    @relation(fields: [foodBatchId], references: [id])
+  distributorId  String
+  distributor    Distributor  @relation(fields: [distributorId], references: [id])
+  quantity       Int
+  status         String      @default("ASSIGNED")
+  acceptedAt     DateTime     @default(now())
+  confirmedAt    DateTime?
+  pickupLat      Float?
+  pickupLng      Float?
+
+  @@index([status])
+}
+
+// ------------------------------------------------------------------
+// DELIVERY (distributor delivers to another stall OR pilgrim point)
+// ------------------------------------------------------------------
+
+model DeliveryRecord {
+  id               String             @id @default(uuid())
+  foodBatchId      String
+  foodBatch        FoodBatch          @relation(fields: [foodBatchId], references: [id])
+  distributorId    String
+  distributor      Distributor        @relation(fields: [distributorId], references: [id])
+  targetType       String
+  targetStallId    String?
+  redistributionRequestId String?
+  redistributionRequest   RedistributionRequest? @relation(fields: [redistributionRequestId], references: [id])
+  pilgrimPointId   String?
+  pilgrimPoint     PilgrimDistributionPoint? @relation(fields: [pilgrimPointId], references: [id])
+  quantity         Int
+  status           String             @default("ASSIGNED")
+  assignedAt       DateTime           @default(now())
+  deliveredAt      DateTime?
+
+  @@index([status])
+}
+
+// ------------------------------------------------------------------
+// PILGRIM DISTRIBUTION
+// ------------------------------------------------------------------
+
+model PilgrimDistributionPoint {
+  id        String   @id @default(uuid())
+  name      String
+  zoneId    String?
+  zone      Zone?    @relation(fields: [zoneId], references: [id])
+  latitude  Float
+  longitude Float
+  isActive  Boolean  @default(true)
+
+  deliveryRecords      DeliveryRecord[]
+  distributionRecords  PilgrimDistributionRecord[]
+}
+
+model PilgrimDistributionRecord {
+  id              String   @id @default(uuid())
+  foodBatchId     String
+  foodBatch       FoodBatch @relation(fields: [foodBatchId], references: [id])
+  pointId         String
+  point           PilgrimDistributionPoint @relation(fields: [pointId], references: [id])
+  quantity        Int
+  distributedAt   DateTime @default(now())
+  distributedByUserId String?
+
+  @@index([pointId])
+}
+
+// ------------------------------------------------------------------
+// WASTE MANAGEMENT
+// ------------------------------------------------------------------
+
+model WasteRecord {
+  id           String        @id @default(uuid())
+  foodBatchId  String?
+  foodBatch    FoodBatch?    @relation(fields: [foodBatchId], references: [id])
+  stallId      String
+  stall        Stall         @relation(fields: [stallId], references: [id])
+  foodName     String
+  quantity     Int
+  reason       String
+  category     String
+  status       String        @default("REPORTED")
+  reportedById String
+  reportedBy   User          @relation("WasteReportedBy", fields: [reportedById], references: [id])
+  reportedAt   DateTime      @default(now())
+  collectedAt  DateTime?
+
+  @@index([status])
+  @@index([category])
+}
+
+// ------------------------------------------------------------------
+// QR TRANSACTIONS (immutable scan log — prevents duplicate/fraud)
+// ------------------------------------------------------------------
+
+model QRTransaction {
+  id           String   @id @default(uuid())
+  foodBatchId  String
+  foodBatch    FoodBatch @relation(fields: [foodBatchId], references: [id])
+  action       String
+  scannedByUserId String
+  quantity     Int
+  latitude     Float?
+  longitude    Float?
+  scannedAt    DateTime @default(now())
+  // one-time-use token embedded in the QR payload; prevents replay/duplicate scans
+  scanToken    String   @unique
+
+  @@index([foodBatchId, action])
+}
+
+// ------------------------------------------------------------------
+// NOTIFICATIONS
+// ------------------------------------------------------------------
+
+model Notification {
+  id        String            @id @default(uuid())
+  userId    String
+  user      User              @relation(fields: [userId], references: [id])
+  type      String
+  title     String
+  message   String
+  isRead    Boolean           @default(false)
+  createdAt DateTime          @default(now())
+  relatedBatchId String?
+
+  @@index([userId, isRead])
+}
+
+// ------------------------------------------------------------------
+// AUDIT LOG
+// ------------------------------------------------------------------
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  action    String
+  entity    String
+  entityId  String?
+  metadata  String?  // JSON string
+  createdAt DateTime @default(now())
+
+  @@index([entity, entityId])
+}
+
+// ------------------------------------------------------------------
+// CONFIGURABLE FOOD-SAFETY / SYSTEM RULES (no hardcoded limits)
+// ------------------------------------------------------------------
+
+model SystemConfig {
+  key   String @id
+  value String // JSON-encoded value
+}
